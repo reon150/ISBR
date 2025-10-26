@@ -1,0 +1,245 @@
+version: '3.8'
+
+services:
+  # PostgreSQL para Products Service
+  products-db:
+    image: postgres:15-alpine
+    container_name: products-db
+    environment:
+      POSTGRES_DB: ${PRODUCTS_DB_NAME}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${PRODUCTS_DB_PORT}:5432"
+    volumes:
+      - products-db-data:/var/lib/postgresql/data
+    networks:
+      - inventory-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL para Inventory Service
+  inventory-db:
+    image: postgres:15-alpine
+    container_name: inventory-db
+    environment:
+      POSTGRES_DB: ${INVENTORY_DB_NAME}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${INVENTORY_DB_PORT}:5432"
+    volumes:
+      - inventory-db-data:/var/lib/postgresql/data
+    networks:
+      - inventory-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis para caché
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - inventory-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Zookeeper para Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: ${KAFKA_ZOOKEEPER_PORT}
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "${KAFKA_ZOOKEEPER_PORT}:2181"
+    networks:
+      - inventory-network
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "${KAFKA_PORT}:9092"
+      - "${KAFKA_INTERNAL_PORT}:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:${KAFKA_ZOOKEEPER_PORT}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${KAFKA_PORT},PLAINTEXT_INTERNAL://kafka:${KAFKA_INTERNAL_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - inventory-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: inventory-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:${KAFKA_INTERNAL_PORT}
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:${KAFKA_ZOOKEEPER_PORT}
+    networks:
+      - inventory-network
+
+  # Redis UI (Redis Commander)
+  redis-ui:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-ui
+    depends_on:
+      - redis
+    ports:
+      - "${REDIS_UI_PORT}:8081"
+    environment:
+      REDIS_HOSTS: "local:redis:6379"
+    networks:
+      - inventory-network
+
+  # Products Microservice
+  products-service:
+    build:
+      context: ./products-service
+      dockerfile: Dockerfile
+    container_name: products-service
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      PORT: ${PRODUCTS_SERVICE_PORT}
+      DB_HOST: products-db
+      DB_PORT: 5432
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${PRODUCTS_DB_NAME}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      KAFKA_BROKERS: kafka:${KAFKA_INTERNAL_PORT}
+      KAFKA_CLIENT_ID: products-service
+      KAFKA_GROUP_ID: products-consumer-group
+      KAFKA_SESSION_TIMEOUT: ${KAFKA_SESSION_TIMEOUT}
+      KAFKA_HEARTBEAT_INTERVAL: ${KAFKA_HEARTBEAT_INTERVAL}
+      KAFKA_INITIAL_RETRY_TIME: ${KAFKA_INITIAL_RETRY_TIME}
+      KAFKA_MAX_RETRIES: ${KAFKA_MAX_RETRIES}
+      KAFKA_TRANSACTION_TIMEOUT: ${KAFKA_TRANSACTION_TIMEOUT}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      EXCHANGE_RATE_API_KEY: ${EXCHANGE_RATE_API_KEY}
+      EXCHANGE_RATE_API_URL: ${EXCHANGE_RATE_API_URL}
+      CACHE_TTL_PRODUCTS: ${CACHE_TTL_PRODUCTS}
+      CACHE_TTL_EXCHANGE_RATES: ${CACHE_TTL_EXCHANGE_RATES}
+      EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS}
+      EVENT_CLEANUP_CRON: ${EVENT_CLEANUP_CRON}
+      LOGS_DIR: ${LOGS_DIR}
+      MAX_ERROR_LOGS: ${MAX_ERROR_LOGS}
+    expose:
+      - "${PRODUCTS_SERVICE_PORT}"
+    depends_on:
+      products-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - inventory-network
+    restart: unless-stopped
+
+  # Inventory Microservice
+  inventory-service:
+    build:
+      context: ./inventory-service
+      dockerfile: Dockerfile
+    container_name: inventory-service
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      PORT: ${INVENTORY_SERVICE_PORT}
+      DB_HOST: inventory-db
+      DB_PORT: 5432
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${INVENTORY_DB_NAME}
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      KAFKA_BROKERS: kafka:${KAFKA_INTERNAL_PORT}
+      KAFKA_CLIENT_ID: inventory-service
+      KAFKA_GROUP_ID: inventory-consumer-group
+      KAFKA_SESSION_TIMEOUT: ${KAFKA_SESSION_TIMEOUT}
+      KAFKA_HEARTBEAT_INTERVAL: ${KAFKA_HEARTBEAT_INTERVAL}
+      KAFKA_INITIAL_RETRY_TIME: ${KAFKA_INITIAL_RETRY_TIME}
+      KAFKA_MAX_RETRIES: ${KAFKA_MAX_RETRIES}
+      KAFKA_TRANSACTION_TIMEOUT: ${KAFKA_TRANSACTION_TIMEOUT}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      CACHE_TTL_INVENTORY: ${CACHE_TTL_INVENTORY}
+      EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS}
+      EVENT_CLEANUP_CRON: ${EVENT_CLEANUP_CRON}
+      LOGS_DIR: ${LOGS_DIR}
+      MAX_ERROR_LOGS: ${MAX_ERROR_LOGS}
+    expose:
+      - "${INVENTORY_SERVICE_PORT}"
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - inventory-network
+    restart: unless-stopped
+
+  # Nginx API Gateway
+  api-gateway:
+    image: nginx:alpine
+    container_name: api-gateway
+    ports:
+      - "${API_GATEWAY_PORT}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - products-service
+      - inventory-service
+    networks:
+      - inventory-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  products-db-data:
+  inventory-db-data:
+  redis-data:
+
+networks:
+  inventory-network:
+    driver: bridge
