@@ -417,12 +417,12 @@ Presentation Layer: Controllers, Guards
 
 ## Tecnologías Utilizadas
 
-- **NestJS** (v10): Framework Node.js con soporte TypeScript
-- **TypeScript** (v5): Lenguaje de programación tipado
-- **TypeORM** (v0.3): ORM para base de datos
-- **PostgreSQL** (v15): Base de datos
-- **Redis** (v7): Cache distribuido
-- **Apache Kafka** (Confluent Platform v7.5): Sistema de mensajería
+- **NestJS**: Framework Node.js con soporte TypeScript
+- **TypeScript**: Lenguaje de programación tipado
+- **TypeORM**: ORM para base de datos
+- **PostgreSQL**: Base de datos
+- **Redis**: Cache distribuido
+- **Apache Kafka**: Sistema de mensajería
 
 ## Endpoints de la API
 
