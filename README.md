@@ -366,11 +366,6 @@ Presentation Layer: Controllers, Guards
 - Replay de eventos históricos para recuperación
 - Offset management previene duplicados
 
-**RabbitMQ no funciona porque**:
-
-- Diseñado para RPC sincrónico y colas de tareas
-- Menor throughput que Kafka
-- No tan bueno para streams de eventos
 
 **Redis Pub/Sub no funciona porque**:
 
@@ -405,9 +400,7 @@ Presentation Layer: Controllers, Guards
 **Qué ofrece**:
 
 - Key-value cache simple
-- Estructuras avanzadas: Sets, Hashes, Sorted Sets
-- Operaciones atómicas (INCR, DECR) para contadores
-- Puede persistir en disco (RDB/AOF)
+- Puede persistir en disco
 
 **Memcached rechazado porque**:
 
